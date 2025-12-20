@@ -18,7 +18,7 @@ thread_local! {
 ///
 /// See the [crate docs](crate) for more information.
 pub struct SamplyLayerBuilder {
-    output_dir: Option<Box<Path>>,
+    output_dir: Option<PathBuf>,
 }
 
 impl Default for SamplyLayerBuilder {
@@ -37,7 +37,7 @@ impl SamplyLayerBuilder {
     ///
     /// If unset, a temporary directory will be created and used.
     pub fn output_dir(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.output_dir = Some(dir.into().into());
+        self.output_dir = Some(dir.into());
         self
     }
 
@@ -49,8 +49,10 @@ impl SamplyLayerBuilder {
             None => &*std::env::temp_dir().join("tracing-samply"),
         };
         let dir = dir.join(std::process::id().to_string());
-        std::fs::create_dir_all(&dir)
-            .map_err(map_io_err("could not create perf markers dir", &dir))?;
+        if cfg!(unix) {
+            std::fs::create_dir_all(&dir)
+                .map_err(map_io_err("could not create perf markers dir", &dir))?;
+        }
         Ok(SamplyLayer { dir: dir.into_boxed_path() })
     }
 }
@@ -116,12 +118,18 @@ where
     S: Subscriber + for<'a> LookupSpan<'a>,
 {
     fn on_enter(&self, id: &span::Id, ctx: Context<'_, S>) {
+        if !cfg!(unix) {
+            return;
+        }
         let Some(span) = ctx.span(id) else { return };
         let start_ns = now_timestamp();
         span.extensions_mut().insert(SpanData { start_ns });
     }
 
     fn on_exit(&self, id: &span::Id, ctx: Context<'_, S>) {
+        if !cfg!(unix) {
+            return;
+        }
         let Some(span) = ctx.span(id) else { return };
         let extensions = span.extensions();
         let Some(data) = extensions.get::<SpanData>() else { return };
@@ -150,13 +158,22 @@ fn now_timestamp() -> u64 {
     }
 }
 
-fn gettid() -> Option<i32> {
+fn gettid() -> Option<u64> {
+    // https://github.com/rust-lang/rust/blob/9044e98b66d074e7f88b1d4cea58bb0538f2eda6/library/std/src/sys/thread/unix.rs#L325
     cfg_if::cfg_if! {
-        if #[cfg(target_os = "linux")] {
-            Some(unsafe { libc::gettid() })
+        if #[cfg(any(target_os = "android", target_os = "linux"))] {
+            Some(unsafe { libc::gettid() } as u64)
         } else if #[cfg(target_vendor = "apple")] {
-            // TODO
-            None
+            let mut tid = 0u64;
+            let status = unsafe { libc::pthread_threadid_np(0, &mut tid) };
+            if status == 0 {
+                Some(tid)
+            } else {
+                None
+            }
+        // } else if #[cfg(windows)] {
+        //     let tid = unsafe { c::GetCurrentThreadId() } as u64;
+        //     if tid == 0 { None } else { Some(tid as _) }
         } else {
             None
         }
