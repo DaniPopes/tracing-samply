@@ -39,9 +39,8 @@ fn main() {
 | 🍎 macOS | ✅ |
 | 🪟 Windows | ⚠️ |
 
-✅ = Compiles, tested in CI, works as expected
-
-⚠️ = Compiles, but does not do anything (yet?)
+- ✅ = Compiles, tested in CI, works as expected
+- ⚠️ = Compiles, but does not do anything (yet?)
 
 ## License
 
