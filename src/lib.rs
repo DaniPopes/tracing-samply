@@ -143,7 +143,27 @@ where
 
 fn now_timestamp() -> u64 {
     cfg_if::cfg_if! {
-        if #[cfg(unix)] {
+        if #[cfg(target_vendor = "apple")] {
+            // https://github.com/mstange/samply/blob/2041b956f650bb92d912990052967d03fef66b75/samply/src/mac/time.rs#L7
+            use std::sync::OnceLock;
+            use mach2::mach_time;
+
+            static NANOS_PER_TICK: OnceLock<mach_time::mach_timebase_info> = OnceLock::new();
+
+            let nanos_per_tick = NANOS_PER_TICK.get_or_init(|| unsafe {
+                let mut info = mach_time::mach_timebase_info::default();
+                let errno = mach_time::mach_timebase_info(&mut info as *mut _);
+                if errno != 0 || info.denom == 0 {
+                    info.numer = 1;
+                    info.denom = 1;
+                };
+                info
+            });
+
+            let time = unsafe { mach_time::mach_absolute_time() };
+
+            time * nanos_per_tick.numer as u64 / nanos_per_tick.denom as u64
+        } else if #[cfg(unix)] {
             let mut ts = unsafe { std::mem::zeroed() };
             if unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts) } != 0 {
                 return u64::MAX;
@@ -161,16 +181,12 @@ fn now_timestamp() -> u64 {
 fn gettid() -> Option<u64> {
     // https://github.com/rust-lang/rust/blob/9044e98b66d074e7f88b1d4cea58bb0538f2eda6/library/std/src/sys/thread/unix.rs#L325
     cfg_if::cfg_if! {
-        if #[cfg(any(target_os = "android", target_os = "linux"))] {
-            Some(unsafe { libc::gettid() } as u64)
-        } else if #[cfg(target_vendor = "apple")] {
+        if #[cfg(target_vendor = "apple")] {
             let mut tid = 0u64;
             let status = unsafe { libc::pthread_threadid_np(0, &mut tid) };
-            if status == 0 {
-                Some(tid)
-            } else {
-                None
-            }
+            (status == 0).then_some(tid)
+        } else if #[cfg(unix)] {
+            Some(unsafe { libc::gettid() } as u64)
         // } else if #[cfg(windows)] {
         //     let tid = unsafe { c::GetCurrentThreadId() } as u64;
         //     if tid == 0 { None } else { Some(tid as _) }
