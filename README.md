@@ -31,6 +31,17 @@ fn main() {
 }
 ```
 
+## Platform Support
+
+| Platform | Status |
+|----------|--------|
+| 🐧 Linux | ✅ |
+| 🍎 macOS | ✅ |
+| 🪟 Windows | ⚠️ |
+
+✅ = Compiles, tested in CI, works as expected
+⚠️ = Compiles, but does not do anything (yet?)
+
 ## License
 
 Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option.
