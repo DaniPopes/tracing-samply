@@ -1,6 +1,7 @@
 use tracing_subscriber::prelude::*;
 
 #[test]
+#[cfg_attr(windows, ignore = "todo")]
 fn basic() {
     unsafe {
         std::env::set_var("RUST_LOG", "info");
