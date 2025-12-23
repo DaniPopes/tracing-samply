@@ -17,10 +17,12 @@ smallvec = { version = "1.15.1", default-features = false, features = ["union"] 
 tracing-core = { version = "0.1", default-features = false }
 tracing-subscriber = { version = "0.3.22", default-features = false, features = ["std"] }
 
+interprocess = "2"
+once_cell = "1"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 memmap2 = "0.9.9"
-interprocess = "2"
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 mach2 = "0.5"

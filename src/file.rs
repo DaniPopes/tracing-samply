@@ -11,7 +11,7 @@ thread_local! {
 }
 
 pub(super) struct FileLayer {
-    pub(super) dir: Box<Path>,
+    dir: Box<Path>,
 }
 
 impl FileLayer {

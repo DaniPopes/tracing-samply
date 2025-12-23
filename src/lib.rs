@@ -15,13 +15,12 @@ use file::FileLayer;
 mod ipc;
 use ipc::IpcLayer;
 
-const IPC: bool = true;
-
 /// [`SamplyLayer`] builder.
 ///
 /// See the [crate docs](crate) for more information.
 pub struct SamplyLayerBuilder {
     output_dir: Option<PathBuf>,
+    ipc: bool,
 }
 
 impl Default for SamplyLayerBuilder {
@@ -33,7 +32,7 @@ impl Default for SamplyLayerBuilder {
 impl SamplyLayerBuilder {
     /// Creates a new [`SamplyLayerBuilder`].
     pub fn new() -> Self {
-        Self { output_dir: None }
+        Self { output_dir: None, ipc: false }
     }
 
     /// Sets the output directory for intermediate files.
@@ -44,10 +43,21 @@ impl SamplyLayerBuilder {
         self
     }
 
+    /// Sets whether to use IPC for communication.
+    ///
+    /// This is a newer way to communicate with samply, so it may not be supported by your samply
+    /// version.
+    pub fn ipc(mut self, ipc: bool) -> Self {
+        self.ipc = ipc;
+        self
+    }
+
     /// Builds a new [`SamplyLayer`].
     pub fn build(self) -> io::Result<SamplyLayer> {
-        let Self { output_dir } = self;
-        Ok(SamplyLayer { imp: Impl::File(FileLayer::new(output_dir)?) })
+        let Self { output_dir, ipc } = self;
+        let imp =
+            if ipc { Impl::Ipc(IpcLayer::new()?) } else { Impl::File(FileLayer::new(output_dir)?) };
+        Ok(SamplyLayer { imp })
     }
 }
 
@@ -56,13 +66,6 @@ impl SamplyLayerBuilder {
 /// See the [crate docs](crate) for more information.
 pub struct SamplyLayer {
     imp: Impl,
-}
-
-struct SpanDataStack {
-    stack: SmallVec<[SpanData; 1]>,
-}
-struct SpanData {
-    start_ts: u64,
 }
 
 impl SamplyLayer {
@@ -156,6 +159,13 @@ fn now_timestamp() -> u64 {
             0
         }
     }
+}
+
+struct SpanDataStack {
+    stack: SmallVec<[SpanData; 1]>,
+}
+struct SpanData {
+    start_ts: u64,
 }
 
 fn gettid() -> Option<u64> {
