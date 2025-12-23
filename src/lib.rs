@@ -3,17 +3,19 @@
 
 use smallvec::{SmallVec, smallvec};
 use std::{
-    cell::RefCell,
-    fs::{File, OpenOptions},
-    io::{self, BufWriter, Write},
+    io::{self},
     path::{Path, PathBuf},
 };
 use tracing_core::{Subscriber, span};
 use tracing_subscriber::{Layer, layer::Context, registry::LookupSpan};
 
-thread_local! {
-    static MARKER_FILE: RefCell<Option<MarkerFile>> = const { RefCell::new(None) };
-}
+mod file;
+use file::FileLayer;
+
+mod ipc;
+use ipc::IpcLayer;
+
+const IPC: bool = true;
 
 /// [`SamplyLayer`] builder.
 ///
@@ -45,16 +47,7 @@ impl SamplyLayerBuilder {
     /// Builds a new [`SamplyLayer`].
     pub fn build(self) -> io::Result<SamplyLayer> {
         let Self { output_dir } = self;
-        let dir = match &output_dir {
-            Some(dir) => dir,
-            None => &*std::env::temp_dir().join("tracing-samply"),
-        };
-        let dir = dir.join(std::process::id().to_string());
-        if cfg!(unix) {
-            std::fs::create_dir_all(&dir)
-                .map_err(map_io_err("could not create perf markers dir", &dir))?;
-        }
-        Ok(SamplyLayer { dir: dir.into_boxed_path() })
+        Ok(SamplyLayer { imp: Impl::File(FileLayer::new(output_dir)?) })
     }
 }
 
@@ -62,7 +55,7 @@ impl SamplyLayerBuilder {
 ///
 /// See the [crate docs](crate) for more information.
 pub struct SamplyLayer {
-    dir: Box<Path>,
+    imp: Impl,
 }
 
 struct SpanDataStack {
@@ -84,38 +77,14 @@ impl SamplyLayer {
     pub fn builder() -> SamplyLayerBuilder {
         SamplyLayerBuilder::new()
     }
+}
 
-    fn create_marker_file(&self) -> MarkerFile {
-        match self.try_create_marker_file() {
-            Ok(file) => file,
-            Err(err) => panic!("{err}"),
-        }
-    }
-
-    fn try_create_marker_file(&self) -> io::Result<MarkerFile> {
-        let pid = std::process::id();
-        let fname = match gettid() {
-            Some(tid) => format!("marker-{pid}-{tid}.txt"),
-            None => format!("marker-{pid}.txt"),
-        };
-        let path = &*self.dir.join(fname);
-        let file = OpenOptions::new()
-            .create_new(true)
-            .read(true)
-            .write(true)
-            .open(path)
-            .map_err(map_io_err("could not create perf markers file", path))?;
-        // mmap the file to notify samply.
-        // Linux perf needs `exec` permission to record it in perf.data.
-        // On macOS, samply only needs the file to be opened, not mmap'ed.
-        #[cfg(all(unix, not(target_vendor = "apple")))]
-        let _ = unsafe {
-            memmap2::MmapOptions::new()
-                .map_exec(&file)
-                .map_err(map_io_err("could not mmap perf markers file", path))?
-        };
-        Ok(MarkerFile::new(file))
-    }
+/// A tracing layer that bridges `tracing` events and spans with `samply`.
+///
+/// See the [crate docs](crate) for more information.
+enum Impl {
+    File(FileLayer),
+    Ipc(IpcLayer),
 }
 
 impl<S> Layer<S> for SamplyLayer
@@ -145,29 +114,10 @@ where
         let Some(data) = extensions.get_mut::<SpanDataStack>() else { return };
         let Some(SpanData { start_ts }) = data.stack.pop() else { return };
         let end_ts = now_timestamp();
-        MARKER_FILE.with_borrow_mut(|file| {
-            let file = file.get_or_insert_with(|| self.create_marker_file());
-            file.write_entry(start_ts, end_ts, span.name());
-        });
-    }
-}
-
-struct MarkerFile {
-    file: BufWriter<File>,
-}
-
-impl MarkerFile {
-    fn new(file: File) -> Self {
-        Self { file: BufWriter::new(file) }
-    }
-
-    fn write_entry(&mut self, start_ts: u64, end_ts: u64, name: &str) {
-        let _ = self.file.write_all(itoa::Buffer::new().format(start_ts).as_bytes());
-        let _ = self.file.write_all(b" ");
-        let _ = self.file.write_all(itoa::Buffer::new().format(end_ts).as_bytes());
-        let _ = self.file.write_all(b" ");
-        let _ = self.file.write_all(name.as_bytes());
-        let _ = self.file.write_all(b"\n");
+        match &self.imp {
+            Impl::File(f) => f.on_exit(start_ts, end_ts, span.name()),
+            Impl::Ipc(i) => i.on_exit(start_ts, end_ts, span.name()),
+        }
     }
 }
 
@@ -235,11 +185,5 @@ fn map_io_err(s: &str, p: &Path) -> impl FnOnce(io::Error) -> io::Error {
 pub mod __private {
     use super::*;
 
-    pub fn flush_marker_file() {
-        MARKER_FILE.with_borrow_mut(|file| {
-            if let Some(file) = file {
-                let _ = file.file.flush();
-            }
-        });
-    }
+    pub use file::flush_marker_file;
 }

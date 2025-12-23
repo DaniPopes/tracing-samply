@@ -20,6 +20,7 @@ tracing-subscriber = { version = "0.3.22", default-features = false, features = 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 memmap2 = "0.9.9"
+interprocess = "2"
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 mach2 = "0.5"
