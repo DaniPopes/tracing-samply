@@ -2,14 +2,27 @@ use crate::gettid;
 use interprocess::local_socket::{GenericFilePath, Name, prelude::*};
 use once_cell::sync::OnceCell as OnceLock;
 use std::{
-    io::{self, BufWriter, Write},
-    sync::{
-        Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+    cell::RefCell,
+    io::{self, Write},
+    sync::atomic::{AtomicUsize, Ordering},
 };
 
-type Stream = Mutex<BufWriter<LocalSocketStream>>;
+thread_local! {
+    static BUF: RefCell<Vec<u8>> = RefCell::new(Vec::with_capacity(4096));
+}
+
+type Stream = LocalSocketStream;
+
+macro_rules! writeln_tls {
+    ($stream:expr, $($t:tt)*) => {
+        BUF.with_borrow_mut(|buf| -> io::Result<()> {
+            buf.clear();
+            writeln!(buf, $($t)*)?;
+            $stream.write_all(buf.as_slice())?;
+            Ok(())
+        })
+    };
+}
 
 pub(super) struct IpcLayer {
     name: Name<'static>,
@@ -30,10 +43,9 @@ impl IpcLayer {
     }
 
     pub(super) fn on_exit(&self, start_ts: u64, end_ts: u64, name: &'static str) {
-        let Some(stream) = self.get() else { return };
+        let Some(mut stream) = self.get() else { return };
         let Some(tid) = gettid() else { return };
-        let mut stream = stream.lock().unwrap();
-        let _ = writeln!(
+        let _ = writeln_tls!(
             stream,
             r#"{{"type":"Span","tid":{tid},"start":{start_ts},"end":{end_ts},"label":"{name}"}}"#
         );
@@ -64,8 +76,9 @@ impl IpcLayer {
     }
 
     fn connect(&self) -> io::Result<Stream> {
-        let mut stream = BufWriter::new(LocalSocketStream::connect(self.name.borrow())?);
-        writeln!(stream, r#"{{"type":"Init","pid":{}}}"#, std::process::id())?;
-        Ok(Mutex::new(stream))
+        let mut stream = LocalSocketStream::connect(self.name.borrow())?;
+        stream.set_nonblocking(true)?;
+        writeln_tls!(stream, r#"{{"type":"Init","pid":{}}}"#, std::process::id())?;
+        Ok(stream)
     }
 }

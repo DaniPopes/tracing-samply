@@ -3,7 +3,7 @@
 
 use smallvec::{SmallVec, smallvec};
 use std::{
-    io::{self},
+    io,
     path::{Path, PathBuf},
 };
 use tracing_core::{Subscriber, span};
@@ -169,6 +169,15 @@ struct SpanData {
 }
 
 fn gettid() -> Option<u64> {
+    thread_local! {
+        static TID: Option<u64> = gettid_impl();
+    }
+
+    TID.with(|x| *x)
+}
+
+#[cold]
+fn gettid_impl() -> Option<u64> {
     // https://github.com/rust-lang/rust/blob/9044e98b66d074e7f88b1d4cea58bb0538f2eda6/library/std/src/sys/thread/unix.rs#L325
     cfg_if::cfg_if! {
         if #[cfg(target_vendor = "apple")] {
