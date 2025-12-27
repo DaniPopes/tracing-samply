@@ -21,10 +21,8 @@ impl FileLayer {
             None => &*std::env::temp_dir().join("tracing-samply"),
         };
         let dir = dir.join(std::process::id().to_string());
-        if cfg!(unix) {
-            std::fs::create_dir_all(&dir)
-                .map_err(map_io_err("could not create perf markers dir", &dir))?;
-        }
+        std::fs::create_dir_all(&dir)
+            .map_err(map_io_err("could not create perf markers dir", &dir))?;
         Ok(Self { dir: dir.into_boxed_path() })
     }
 

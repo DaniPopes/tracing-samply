@@ -55,8 +55,13 @@ impl SamplyLayerBuilder {
     /// Builds a new [`SamplyLayer`].
     pub fn build(self) -> io::Result<SamplyLayer> {
         let Self { output_dir, ipc } = self;
-        let imp =
-            if ipc { Impl::Ipc(IpcLayer::new()?) } else { Impl::File(FileLayer::new(output_dir)?) };
+        let imp = if !cfg!(unix) {
+            Impl::NonUnix
+        } else if ipc {
+            Impl::Ipc(IpcLayer::new()?)
+        } else {
+            Impl::File(FileLayer::new(output_dir)?)
+        };
         Ok(SamplyLayer { imp })
     }
 }
@@ -88,6 +93,7 @@ impl SamplyLayer {
 enum Impl {
     File(FileLayer),
     Ipc(IpcLayer),
+    NonUnix,
 }
 
 impl<S> Layer<S> for SamplyLayer
@@ -118,6 +124,7 @@ where
         let Some(SpanData { start_ts }) = data.stack.pop() else { return };
         let end_ts = now_timestamp();
         match &self.imp {
+            Impl::NonUnix => {}
             Impl::File(f) => f.on_exit(start_ts, end_ts, span.name()),
             Impl::Ipc(i) => i.on_exit(start_ts, end_ts, span.name()),
         }
